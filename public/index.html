@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mixboard — StagelinQ DJ Monitor</title>
+    <meta name="description" content="Real-time monitoring dashboard for Denon DJ equipment via StagelinQ">
+    <link rel="preconnect" href="https://fonts.loli.net">
+    <link rel="preconnect" href="https://gstatic.loli.net" crossorigin>
+    <link
+        href="https://fonts.loli.net/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <!-- ═══ Header ═══ -->
+    <header id="app-header">
+        <div class="header-left">
+            <div class="logo">
+                <span class="logo-icon">◉</span>
+                <span class="logo-text">MIXBOARD</span>
+            </div>
+            <div id="connection-badge" class="badge badge-disconnected">
+                <span class="badge-dot"></span>
+                <span id="connection-text">未连接</span>
+            </div>
+        </div>
+        <div class="header-center">
+            <div class="header-clocks">
+                <div class="clock-group">
+                    <span class="clock-label">北京时间</span>
+                    <span class="clock-value" id="system-clock">--:--:--</span>
+                </div>
+                <div class="clock-divider"></div>
+                <div class="clock-group">
+                    <span class="clock-label">SMPTE</span>
+                    <span class="clock-value smpte" id="smpte-time">00:00:00.00</span>
+                </div>
+                <div class="smpte-controls">
+                    <button class="smpte-btn" id="smpte-start" title="开始">▶</button>
+                    <button class="smpte-btn" id="smpte-pause" title="暂停">⏸</button>
+                    <button class="smpte-btn" id="smpte-reset" title="重置">⏹</button>
+                </div>
+            </div>
+        </div>
+        <div class="header-right">
+            <div id="device-info" class="device-info">
+                <span id="device-name" class="device-name">等待设备...</span>
+                <span id="device-ip" class="device-ip"></span>
+            </div>
+            <span id="sd-badge" class="badge badge-storage" style="display:none" title="SD Card Connected">SD</span>
+            <span id="usb-badge" class="badge badge-storage" style="display:none" title="USB Drive Connected">USB</span>
+            <span id="demo-badge" class="badge badge-demo" style="display:none">DEMO</span>
+            <button id="theme-toggle-btn" class="icon-btn" title="切换主题">
+                <svg id="theme-icon-dark" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                </svg>
+                <svg id="theme-icon-light" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" style="display:none">
+                    <circle cx="12" cy="12" r="5" />
+                    <line x1="12" y1="1" x2="12" y2="3" />
+                    <line x1="12" y1="21" x2="12" y2="23" />
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                    <line x1="1" y1="12" x2="3" y2="12" />
+                    <line x1="21" y1="12" x2="23" y2="12" />
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                </svg>
+            </button>
+            <button id="settings-btn" class="icon-btn" title="设置">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3" />
+                    <path
+                        d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- ═══ Main Content ═══ -->
+    <main id="app-main">
+
+        <!-- Decks Grid: 2x2 compact -->
+        <section id="decks-section" class="decks-grid">
+
+            <!-- DECK TEMPLATE repeated for 1-4 -->
+            <div class="deck-card" id="deck-1" data-deck="1">
+                <div class="deck-header">
+                    <div class="deck-label">
+                        <span class="deck-number">DECK A</span>
+                        <span class="deck-master-badge" id="deck-1-master" style="display:none">MASTER</span>
+                    </div>
+                    <div class="deck-status-icons">
+                        <span class="status-icon" id="deck-1-play" title="播放">⏸</span>
+                        <span class="status-icon" id="deck-1-sync" title="Sync" style="display:none">SYNC</span>
+                    </div>
+                </div>
+                <div class="deck-body">
+                    <div class="deck-artwork" id="deck-1-artwork">
+                        <div class="artwork-placeholder">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="1.5" opacity="0.3">
+                                <circle cx="12" cy="12" r="10" />
+                                <circle cx="12" cy="12" r="3" />
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="deck-track-info">
+                        <div class="track-title" id="deck-1-title">—</div>
+                        <div class="track-artist" id="deck-1-artist">未加载曲目</div>
+                        <div class="track-meta-inline">
+                            <span class="meta-chip"><span class="ml">BPM</span> <span class="bpm-value"
+                                    id="deck-1-bpm">—</span></span>
+                            <span class="meta-chip"><span class="ml">原</span> <span
+                                    id="deck-1-track-bpm">—</span></span>
+                            <span class="meta-chip"><span class="ml">KEY</span> <span id="deck-1-key">—</span></span>
+                            <span class="meta-chip"><span class="ml">🔒</span> <span class="indicator"
+                                    id="deck-1-keylock">OFF</span></span>
+                            <span class="meta-chip"><span class="ml">👆</span> <span class="indicator"
+                                    id="deck-1-touch">OFF</span></span>
+                        </div>
+                    </div>
+                    <div class="deck-vol-bar">
+                        <div class="vol-track">
+                            <div class="vol-fill" id="deck-1-volume-fill"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="deck-progress-row">
+                    <span class="time-label" id="deck-1-elapsed">--:--</span>
+                    <div class="deck-progress">
+                        <div class="deck-progress-fill" id="deck-1-progress-fill"></div>
+                    </div>
+                    <span class="time-label" id="deck-1-total">--:--</span>
+                </div>
+                <div class="deck-details-row">
+                    <span class="detail-chip"><span class="dl">CUE</span> <span id="deck-1-cue">—</span></span>
+                    <span class="detail-chip loop-chip">
+                        <span class="dl">LOOP</span>
+                        <span class="loop-badge" id="deck-1-loop-state">OFF</span>
+                        <span id="deck-1-loop-in">—</span>→<span id="deck-1-loop-out">—</span>
+                        <span class="beats-val" id="deck-1-loop-beats">—</span>
+                    </span>
+                </div>
+                <div class="hotcue-grid">
+                    <div class="hotcue-pad" id="deck-1-hc-1"></div>
+                    <div class="hotcue-pad" id="deck-1-hc-2"></div>
+                    <div class="hotcue-pad" id="deck-1-hc-3"></div>
+                    <div class="hotcue-pad" id="deck-1-hc-4"></div>
+                    <div class="hotcue-pad" id="deck-1-hc-5"></div>
+                    <div class="hotcue-pad" id="deck-1-hc-6"></div>
+                    <div class="hotcue-pad" id="deck-1-hc-7"></div>
+                    <div class="hotcue-pad" id="deck-1-hc-8"></div>
+                </div>
+            </div>
+
+            <div class="deck-card" id="deck-2" data-deck="2">
+                <div class="deck-header">
+                    <div class="deck-label">
+                        <span class="deck-number">DECK B</span>
+                        <span class="deck-master-badge" id="deck-2-master" style="display:none">MASTER</span>
+                    </div>
+                    <div class="deck-status-icons">
+                        <span class="status-icon" id="deck-2-play" title="播放">⏸</span>
+                        <span class="status-icon" id="deck-2-sync" title="Sync" style="display:none">SYNC</span>
+                    </div>
+                </div>
+                <div class="deck-body">
+                    <div class="deck-artwork" id="deck-2-artwork">
+                        <div class="artwork-placeholder"><svg width="32" height="32" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="1.5" opacity="0.3">
+                                <circle cx="12" cy="12" r="10" />
+                                <circle cx="12" cy="12" r="3" />
+                            </svg></div>
+                    </div>
+                    <div class="deck-track-info">
+                        <div class="track-title" id="deck-2-title">—</div>
+                        <div class="track-artist" id="deck-2-artist">未加载曲目</div>
+                        <div class="track-meta-inline">
+                            <span class="meta-chip"><span class="ml">BPM</span> <span class="bpm-value"
+                                    id="deck-2-bpm">—</span></span>
+                            <span class="meta-chip"><span class="ml">原</span> <span
+                                    id="deck-2-track-bpm">—</span></span>
+                            <span class="meta-chip"><span class="ml">KEY</span> <span id="deck-2-key">—</span></span>
+                            <span class="meta-chip"><span class="ml">🔒</span> <span class="indicator"
+                                    id="deck-2-keylock">OFF</span></span>
+                            <span class="meta-chip"><span class="ml">👆</span> <span class="indicator"
+                                    id="deck-2-touch">OFF</span></span>
+                        </div>
+                    </div>
+                    <div class="deck-vol-bar">
+                        <div class="vol-track">
+                            <div class="vol-fill" id="deck-2-volume-fill"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="deck-progress-row">
+                    <span class="time-label" id="deck-2-elapsed">--:--</span>
+                    <div class="deck-progress">
+                        <div class="deck-progress-fill" id="deck-2-progress-fill"></div>
+                    </div>
+                    <span class="time-label" id="deck-2-total">--:--</span>
+                </div>
+                <div class="deck-details-row">
+                    <span class="detail-chip"><span class="dl">CUE</span> <span id="deck-2-cue">—</span></span>
+                    <span class="detail-chip loop-chip"><span class="dl">LOOP</span><span class="loop-badge"
+                            id="deck-2-loop-state">OFF</span><span id="deck-2-loop-in">—</span>→<span
+                            id="deck-2-loop-out">—</span><span class="beats-val" id="deck-2-loop-beats">—</span></span>
+                </div>
+            </div>
+
+            <div class="deck-card" id="deck-3" data-deck="3">
+                <div class="deck-header">
+                    <div class="deck-label">
+                        <span class="deck-number">DECK C</span>
+                        <span class="deck-master-badge" id="deck-3-master" style="display:none">MASTER</span>
+                    </div>
+                    <div class="deck-status-icons">
+                        <span class="status-icon" id="deck-3-play" title="播放">⏸</span>
+                        <span class="status-icon" id="deck-3-sync" title="Sync" style="display:none">SYNC</span>
+                    </div>
+                </div>
+                <div class="deck-body">
+                    <div class="deck-artwork" id="deck-3-artwork">
+                        <div class="artwork-placeholder"><svg width="32" height="32" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="1.5" opacity="0.3">
+                                <circle cx="12" cy="12" r="10" />
+                                <circle cx="12" cy="12" r="3" />
+                            </svg></div>
+                    </div>
+                    <div class="deck-track-info">
+                        <div class="track-title" id="deck-3-title">—</div>
+                        <div class="track-artist" id="deck-3-artist">未加载曲目</div>
+                        <div class="track-meta-inline">
+                            <span class="meta-chip"><span class="ml">BPM</span> <span class="bpm-value"
+                                    id="deck-3-bpm">—</span></span>
+                            <span class="meta-chip"><span class="ml">原</span> <span
+                                    id="deck-3-track-bpm">—</span></span>
+                            <span class="meta-chip"><span class="ml">KEY</span> <span id="deck-3-key">—</span></span>
+                            <span class="meta-chip"><span class="ml">🔒</span> <span class="indicator"
+                                    id="deck-3-keylock">OFF</span></span>
+                            <span class="meta-chip"><span class="ml">👆</span> <span class="indicator"
+                                    id="deck-3-touch">OFF</span></span>
+                        </div>
+                    </div>
+                    <div class="deck-vol-bar">
+                        <div class="vol-track">
+                            <div class="vol-fill" id="deck-3-volume-fill"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="deck-progress-row">
+                    <span class="time-label" id="deck-3-elapsed">--:--</span>
+                    <div class="deck-progress">
+                        <div class="deck-progress-fill" id="deck-3-progress-fill"></div>
+                    </div>
+                    <span class="time-label" id="deck-3-total">--:--</span>
+                </div>
+                <div class="deck-details-row">
+                    <span class="detail-chip"><span class="dl">CUE</span> <span id="deck-3-cue">—</span></span>
+                    <span class="detail-chip loop-chip"><span class="dl">LOOP</span><span class="loop-badge"
+                            id="deck-3-loop-state">OFF</span><span id="deck-3-loop-in">—</span>→<span
+                            id="deck-3-loop-out">—</span><span class="beats-val" id="deck-3-loop-beats">—</span></span>
+                </div>
+            </div>
+
+            <div class="deck-card" id="deck-4" data-deck="4">
+                <div class="deck-header">
+                    <div class="deck-label">
+                        <span class="deck-number">DECK D</span>
+                        <span class="deck-master-badge" id="deck-4-master" style="display:none">MASTER</span>
+                    </div>
+                    <div class="deck-status-icons">
+                        <span class="status-icon" id="deck-4-play" title="播放">⏸</span>
+                        <span class="status-icon" id="deck-4-sync" title="Sync" style="display:none">SYNC</span>
+                    </div>
+                </div>
+                <div class="deck-body">
+                    <div class="deck-artwork" id="deck-4-artwork">
+                        <div class="artwork-placeholder"><svg width="32" height="32" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="1.5" opacity="0.3">
+                                <circle cx="12" cy="12" r="10" />
+                                <circle cx="12" cy="12" r="3" />
+                            </svg></div>
+                    </div>
+                    <div class="deck-track-info">
+                        <div class="track-title" id="deck-4-title">—</div>
+                        <div class="track-artist" id="deck-4-artist">未加载曲目</div>
+                        <div class="track-meta-inline">
+                            <span class="meta-chip"><span class="ml">BPM</span> <span class="bpm-value"
+                                    id="deck-4-bpm">—</span></span>
+                            <span class="meta-chip"><span class="ml">原</span> <span
+                                    id="deck-4-track-bpm">—</span></span>
+                            <span class="meta-chip"><span class="ml">KEY</span> <span id="deck-4-key">—</span></span>
+                            <span class="meta-chip"><span class="ml">🔒</span> <span class="indicator"
+                                    id="deck-4-keylock">OFF</span></span>
+                            <span class="meta-chip"><span class="ml">👆</span> <span class="indicator"
+                                    id="deck-4-touch">OFF</span></span>
+                        </div>
+                    </div>
+                    <div class="deck-vol-bar">
+                        <div class="vol-track">
+                            <div class="vol-fill" id="deck-4-volume-fill"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="deck-progress-row">
+                    <span class="time-label" id="deck-4-elapsed">--:--</span>
+                    <div class="deck-progress">
+                        <div class="deck-progress-fill" id="deck-4-progress-fill"></div>
+                    </div>
+                    <span class="time-label" id="deck-4-total">--:--</span>
+                </div>
+                <div class="deck-details-row">
+                    <span class="detail-chip"><span class="dl">CUE</span> <span id="deck-4-cue">—</span></span>
+                    <span class="detail-chip loop-chip"><span class="dl">LOOP</span><span class="loop-badge"
+                            id="deck-4-loop-state">OFF</span><span id="deck-4-loop-in">—</span>→<span
+                            id="deck-4-loop-out">—</span><span class="beats-val" id="deck-4-loop-beats">—</span></span>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- ═══ Mixer Panel ═══ -->
+        <section id="mixer-section" class="mixer-panel">
+            <div class="mixer-header"><span class="mixer-title">MIXER</span></div>
+            <div class="mixer-body">
+                <div class="channel-faders">
+                    <div class="channel-fader" data-ch="3">
+                        <span class="ch-label">CH 3</span>
+                        <div class="fader-track vertical">
+                            <div class="fader-fill" id="mixer-ch3-fill"></div>
+                            <div class="fader-knob" id="mixer-ch3-knob"></div>
+                        </div>
+                        <span class="ch-value" id="mixer-ch3-val">0%</span>
+                    </div>
+                    <div class="channel-fader" data-ch="1">
+                        <span class="ch-label">CH 1</span>
+                        <div class="fader-track vertical">
+                            <div class="fader-fill" id="mixer-ch1-fill"></div>
+                            <div class="fader-knob" id="mixer-ch1-knob"></div>
+                        </div>
+                        <span class="ch-value" id="mixer-ch1-val">0%</span>
+                    </div>
+                    <div class="channel-fader" data-ch="2">
+                        <span class="ch-label">CH 2</span>
+                        <div class="fader-track vertical">
+                            <div class="fader-fill" id="mixer-ch2-fill"></div>
+                            <div class="fader-knob" id="mixer-ch2-knob"></div>
+                        </div>
+                        <span class="ch-value" id="mixer-ch2-val">0%</span>
+                    </div>
+                    <div class="channel-fader" data-ch="4">
+                        <span class="ch-label">CH 4</span>
+                        <div class="fader-track vertical">
+                            <div class="fader-fill" id="mixer-ch4-fill"></div>
+                            <div class="fader-knob" id="mixer-ch4-knob"></div>
+                        </div>
+                        <span class="ch-value" id="mixer-ch4-val">0%</span>
+                    </div>
+                </div>
+                <div class="crossfader-section">
+                    <span class="cf-label">CROSSFADER</span>
+                    <div class="crossfader-track">
+                        <div class="crossfader-knob" id="mixer-cf-knob"></div>
+                    </div>
+                    <div class="cf-labels"><span>A</span><span>B</span></div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- ═══ Settings Sidebar ═══ -->
+    <aside id="settings-panel" class="settings-panel">
+        <div class="settings-header">
+            <h2>设置</h2>
+            <button id="settings-close" class="icon-btn" title="关闭"><svg width="18" height="18" viewBox="0 0 24 24"
+                    fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                </svg></button>
+        </div>
+        <div class="settings-body">
+            <div class="settings-section">
+                <h3>连接状态</h3>
+                <div class="settings-status-card" id="settings-conn-status">
+                    <div class="status-row"><span class="status-label">状态</span><span class="status-val"
+                            id="settings-conn-state">未连接</span></div>
+                    <div class="status-row"><span class="status-label">设备</span><span class="status-val"
+                            id="settings-device-name">—</span></div>
+                    <div class="status-row"><span class="status-label">IP</span><span class="status-val mono"
+                            id="settings-device-ip">—</span></div>
+                    <div class="status-row"><span class="status-label">软件</span><span class="status-val"
+                            id="settings-device-sw">—</span></div>
+                </div>
+            </div>
+            <div class="settings-section">
+                <h3>网络接口</h3>
+                <select id="interface-select">
+                    <option value="auto">自动选择</option>
+                </select>
+                <div class="settings-btn-row">
+                    <button id="refresh-interfaces" class="btn btn-sm">🔄 刷新</button>
+                    <button id="apply-interface" class="btn btn-sm btn-primary">✓ 应用</button>
+                </div>
+                <div class="settings-current" id="current-interface-info"></div>
+            </div>
+            <div class="settings-section">
+                <h3>自动重连</h3>
+                <label class="toggle-row"><span>发现历史设备时自动连接</span><input type="checkbox" id="auto-reconnect-toggle"
+                        checked><span class="toggle-slider"></span></label>
+            </div>
+            <div class="settings-section">
+                <h3>运行模式</h3>
+                <div class="mode-switcher">
+                    <select id="mode-select">
+                        <option value="demo">🎭 Demo</option>
+                        <option value="live">📡 Live</option>
+                    </select>
+                    <button id="apply-mode" class="btn btn-sm btn-primary">切换模式</button>
+                </div>
+                <div class="settings-current" id="current-mode-info"></div>
+            </div>
+            <div class="settings-section">
+                <h3>手动连接</h3>
+                <div class="manual-connect-row">
+                    <input type="text" id="manual-ip-input" placeholder="169.254.x.x" autocomplete="off">
+                    <button id="manual-connect-btn" class="btn btn-sm btn-primary">连接</button>
+                </div>
+                <div class="settings-current" id="manual-connect-status"></div>
+            </div>
+            <div class="settings-section">
+                <h3>发现的设备 <button id="refresh-devices-btn" class="btn-icon-sm" title="刷新">🔄</button></h3>
+                <div id="discovered-devices-list" class="device-list">
+                    <div class="empty-state">扫描中...</div>
+                </div>
+            </div>
+            <div class="settings-section">
+                <h3>设备历史</h3>
+                <div id="history-list" class="history-list">
+                    <div class="empty-state">暂无</div>
+                </div>
+            </div>
+            <div class="settings-section settings-danger-zone">
+                <button id="restart-btn" class="btn btn-danger btn-full">⟳ 重启</button>
+            </div>
+        </div>
+    </aside>
+    <div id="settings-overlay" class="settings-overlay"></div>
+    <div id="toast-container" class="toast-container"></div>
+    <script src="app.js"></script>
+</body>
+
+</html>

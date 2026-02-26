@@ -1,0 +1,35 @@
+{
+  "name": "mixboard",
+  "version": "1.0.0",
+  "description": "StagelinQ DJ Equipment Monitor — Real-time monitoring for Denon DJ Prime series",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js --demo",
+    "postinstall": "patch-package"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LaokeQwQ/Mixboard.git"
+  },
+  "keywords": [
+    "stagelinq",
+    "denon",
+    "dj",
+    "monitor"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/LaokeQwQ/Mixboard/issues"
+  },
+  "homepage": "https://github.com/LaokeQwQ/Mixboard#readme",
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "express": "^5.2.1",
+    "patch-package": "^8.0.1",
+    "stagelinq": "^3.0.4",
+    "ws": "^8.19.0"
+  }
+}

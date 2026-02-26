@@ -1,0 +1,20 @@
+[
+  {
+    "ip": "169.254.13.37",
+    "deviceName": "Denon Prime 4 (Demo)",
+    "softwareName": "JP11",
+    "softwareVersion": "3.4.0",
+    "lastSeen": "2026-02-26T13:43:48.728Z",
+    "autoConnect": true,
+    "firstSeen": "2026-02-26T13:21:56.273Z"
+  },
+  {
+    "ip": "169.254.153.68",
+    "deviceName": "prime4plus",
+    "softwareName": "JC11",
+    "softwareVersion": "4.3.4",
+    "lastSeen": "2026-02-26T16:08:07.585Z",
+    "autoConnect": true,
+    "firstSeen": "2026-02-26T13:51:41.155Z"
+  }
+]

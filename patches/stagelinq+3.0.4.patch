@@ -1,0 +1,274 @@
+diff --git a/node_modules/stagelinq/dist/StageLinq/index.js b/node_modules/stagelinq/dist/StageLinq/index.js
+index 403eaf7..a30e3a6 100644
+--- a/node_modules/stagelinq/dist/StageLinq/index.js
++++ b/node_modules/stagelinq/dist/StageLinq/index.js
+@@ -50,6 +50,10 @@ class StageLinqInstance extends events_1.EventEmitter {
+         this.devices.on('nowPlaying', (status) => this.emit('nowPlaying', status));
+         this.devices.on('stateChanged', (status) => this.emit('stateChanged', status));
+         this.devices.on('message', (info, data) => this.emit('message', info, data));
++        this.devices.on('beatMessage', (data) => this.emit('beatMessage', data));
++        // Forward database events
++        this.devices.databases.on('dbDownloaded', (sourceId, dbPath) => this.emit('dbDownloaded', sourceId, dbPath));
++        this.devices.databases.on('dbProgress', (sourceId, total, downloaded, percent) => this.emit('dbProgress', sourceId, total, downloaded, percent));
+     }
+     /**
+      * Whether the instance is currently connected
+@@ -81,7 +85,12 @@ class StageLinqInstance extends events_1.EventEmitter {
+         const msg = (0, network_1.createDiscoveryMessage)(types_1.Action.Login, this.instanceOptions.actingAs);
+         await (0, network_1.announce)(msg);
+         this.listener.listenForDevices(async (connectionInfo) => {
+-            await this.devices.handleDevice(connectionInfo);
++            try {
++                await this.devices.handleDevice(connectionInfo);
++            } catch (e) {
++                // Prevent unhandled rejection from crashing the process
++                LogEmitter_1.Logger.warn(`handleDevice error for ${connectionInfo.address}: ${e.message}`);
++            }
+         });
+         this._isConnected = true;
+         this.emit('listening');
+diff --git a/node_modules/stagelinq/dist/devices/Player.js b/node_modules/stagelinq/dist/devices/Player.js
+index 2e9b9ac..cc4c0f3 100644
+--- a/node_modules/stagelinq/dist/devices/Player.js
++++ b/node_modules/stagelinq/dist/devices/Player.js
+@@ -86,11 +86,22 @@ class Player extends events_1.EventEmitter {
+                         : (/Track\/ArtistName$/.test(name)) ? { artist: json.string }
+                             : (/Track\/TrackData$/.test(name)) ? { hasTrackData: json.state }
+                                 : (/Track\/TrackName$/.test(name)) ? { fileLocation: json.string }
+-                                    : (/CurrentBPM$/.test(name)) ? { currentBpm: json.value }
+-                                        : (/ExternalMixerVolume$/.test(name)) ? { externalMixerVolume: json.value }
+-                                            : (/Play$/.test(name)) ? { play: json.state }
+-                                                : (/PlayerJogColor[A-D]$/.test(name)) ? { jogColor: json.color }
+-                                                    : null;
++                                    : (/Track\/CurrentBPM$/.test(name)) ? { trackBpm: json.value }
++                                        : (/CurrentBPM$/.test(name)) ? { currentBpm: json.value }
++                                            : (/ExternalMixerVolume$/.test(name)) ? { externalMixerVolume: json.value }
++                                                : (/Play$/.test(name)) ? { play: json.state }
++                                                    : (/Speed$/.test(name)) ? { speed: json.value }
++                                                        : (/SyncMode$/.test(name)) ? { syncMode: json.state }
++                                                            : (/PlayerJogColor[A-D]$/.test(name)) ? { jogColor: json.color }
++                                                                : (/Hotcue1$/i.test(name)) ? { hotcue1: { state: json.state, color: json.color } }
++                                                                    : (/Hotcue2$/i.test(name)) ? { hotcue2: { state: json.state, color: json.color } }
++                                                                        : (/Hotcue3$/i.test(name)) ? { hotcue3: { state: json.state, color: json.color } }
++                                                                            : (/Hotcue4$/i.test(name)) ? { hotcue4: { state: json.state, color: json.color } }
++                                                                                : (/Hotcue5$/i.test(name)) ? { hotcue5: { state: json.state, color: json.color } }
++                                                                                    : (/Hotcue6$/i.test(name)) ? { hotcue6: { state: json.state, color: json.color } }
++                                                                                        : (/Hotcue7$/i.test(name)) ? { hotcue7: { state: json.state, color: json.color } }
++                                                                                            : (/Hotcue8$/i.test(name)) ? { hotcue8: { state: json.state, color: json.color } }
++                                                                                                : null;
+         if (cueData && deck) {
+             this.queue[deck].push({ layer: deck, ...cueData });
+         }
+diff --git a/node_modules/stagelinq/dist/network/StageLinqDevices.js b/node_modules/stagelinq/dist/network/StageLinqDevices.js
+index 00656fc..d05c545 100644
+--- a/node_modules/stagelinq/dist/network/StageLinqDevices.js
++++ b/node_modules/stagelinq/dist/network/StageLinqDevices.js
+@@ -168,12 +168,12 @@ class StageLinqDevices extends events_1.EventEmitter {
+                 LogEmitter_1.Logger.warn(`Could not connect to ${this.deviceId(connectionInfo)} ` +
+                     `(${attempt}/${this.options.maxRetries}): ${e}`);
+                 attempt += 1;
+-                (0, utils_1.sleep)(500);
++                await (0, utils_1.sleep)(2000);
+             }
+         }
+-        // We failed 3 times. Throw exception.
+-        this.discoveryStatus.set(this.deviceId(connectionInfo), ConnectionStatus.FAILED);
+-        throw new Error(`Could not connect to ${this.deviceId(connectionInfo)}`);
++        // We exhausted all retries. Reset status so device can be retried on next discovery.
++        LogEmitter_1.Logger.warn(`Failed to connect to ${this.deviceId(connectionInfo)} after ${this.options.maxRetries} attempts. Will retry on next discovery.`);
++        this.discoveryStatus.delete(this.deviceId(connectionInfo));
+     }
+     async setupFileTransferService(networkDevice, connectionInfo) {
+         const sourceId = this.sourceId(connectionInfo);
+@@ -235,6 +235,17 @@ class StageLinqDevices extends events_1.EventEmitter {
+         player.on('nowPlaying', (status) => {
+             this.emit('nowPlaying', status);
+         });
++        // Setup BeatInfo service for real-time beat/sample position
++        try {
++            const BeatInfo = require('../services/BeatInfo').BeatInfo;
++            const beatInfo = await networkDevice.connectToService(BeatInfo);
++            beatInfo.on('beatMessage', (data) => {
++                this.emit('beatMessage', data);
++            });
++            LogEmitter_1.Logger.info(`BeatInfo service connected for ${connectionInfo.address}`);
++        } catch (e) {
++            LogEmitter_1.Logger.warn(`BeatInfo service unavailable for ${connectionInfo.address}: ${e.message}`);
++        }
+     }
+     deviceId(device) {
+         return `${device.address}:${device.port}:` +
+diff --git a/node_modules/stagelinq/dist/services/StateMap.js b/node_modules/stagelinq/dist/services/StateMap.js
+index 9562ac2..4c09e32 100644
+--- a/node_modules/stagelinq/dist/services/StateMap.js
++++ b/node_modules/stagelinq/dist/services/StateMap.js
+@@ -13,64 +13,140 @@ exports.States = [
+     types_1.StageLinqValue.MixerCH3faderPosition,
+     types_1.StageLinqValue.MixerCH4faderPosition,
+     types_1.StageLinqValue.MixerCrossfaderPosition,
+-    // Decks
++    types_1.StageLinqValue.MixerNumberOfChannels,
++    types_1.StageLinqValue.MixerChannelAssignment1,
++    types_1.StageLinqValue.MixerChannelAssignment2,
++    types_1.StageLinqValue.MixerChannelAssignment3,
++    types_1.StageLinqValue.MixerChannelAssignment4,
++    // Deck 1
+     types_1.StageLinqValue.EngineDeck1Play,
+     types_1.StageLinqValue.EngineDeck1PlayState,
+     types_1.StageLinqValue.EngineDeck1PlayStatePath,
++    types_1.StageLinqValue.EngineDeck1CurrentBPM,
++    types_1.StageLinqValue.EngineDeck1Speed,
++    types_1.StageLinqValue.EngineDeck1SpeedRange,
++    types_1.StageLinqValue.EngineDeck1SyncMode,
++    types_1.StageLinqValue.EngineDeck1ExternalMixerVolume,
++    types_1.StageLinqValue.EngineDeck1ExternalScratchWheelTouch,
++    types_1.StageLinqValue.EngineDeck1DeckIsMaster,
+     types_1.StageLinqValue.EngineDeck1TrackArtistName,
+-    types_1.StageLinqValue.EngineDeck1TrackTrackNetworkPath,
+-    types_1.StageLinqValue.EngineDeck1TrackSongLoaded,
+     types_1.StageLinqValue.EngineDeck1TrackSongName,
+-    types_1.StageLinqValue.EngineDeck1TrackTrackData,
+     types_1.StageLinqValue.EngineDeck1TrackTrackName,
+-    types_1.StageLinqValue.EngineDeck1CurrentBPM,
+-    types_1.StageLinqValue.EngineDeck1ExternalMixerVolume,
++    types_1.StageLinqValue.EngineDeck1TrackTrackNetworkPath,
++    types_1.StageLinqValue.EngineDeck1TrackTrackURI,
++    types_1.StageLinqValue.EngineDeck1TrackTrackData,
++    types_1.StageLinqValue.EngineDeck1TrackTrackLength,
++    types_1.StageLinqValue.EngineDeck1TrackSongLoaded,
++    types_1.StageLinqValue.EngineDeck1TrackSongAnalyzed,
++    types_1.StageLinqValue.EngineDeck1TrackSampleRate,
++    types_1.StageLinqValue.EngineDeck1TrackCurrentBPM,
++    types_1.StageLinqValue.EngineDeck1TrackCurrentKeyIndex,
++    types_1.StageLinqValue.EngineDeck1TrackKeyLock,
++    types_1.StageLinqValue.EngineDeck1TrackCuePosition,
++    types_1.StageLinqValue.EngineDeck1TrackLoopEnableState,
++    types_1.StageLinqValue.EngineDeck1TrackCurrentLoopInPosition,
++    types_1.StageLinqValue.EngineDeck1TrackCurrentLoopOutPosition,
++    types_1.StageLinqValue.EngineDeck1TrackCurrentLoopSizeInBeats,
++    // Deck 2
+     types_1.StageLinqValue.EngineDeck2Play,
+     types_1.StageLinqValue.EngineDeck2PlayState,
+     types_1.StageLinqValue.EngineDeck2PlayStatePath,
++    types_1.StageLinqValue.EngineDeck2CurrentBPM,
++    types_1.StageLinqValue.EngineDeck2Speed,
++    types_1.StageLinqValue.EngineDeck2SpeedRange,
++    types_1.StageLinqValue.EngineDeck2SyncMode,
++    types_1.StageLinqValue.EngineDeck2ExternalMixerVolume,
++    types_1.StageLinqValue.EngineDeck2ExternalScratchWheelTouch,
++    types_1.StageLinqValue.EngineDeck2DeckIsMaster,
+     types_1.StageLinqValue.EngineDeck2TrackArtistName,
+-    types_1.StageLinqValue.EngineDeck2TrackTrackNetworkPath,
+-    types_1.StageLinqValue.EngineDeck2TrackSongLoaded,
+     types_1.StageLinqValue.EngineDeck2TrackSongName,
+-    types_1.StageLinqValue.EngineDeck2TrackTrackData,
+     types_1.StageLinqValue.EngineDeck2TrackTrackName,
+-    types_1.StageLinqValue.EngineDeck2CurrentBPM,
+-    types_1.StageLinqValue.EngineDeck2ExternalMixerVolume,
++    types_1.StageLinqValue.EngineDeck2TrackTrackNetworkPath,
++    types_1.StageLinqValue.EngineDeck2TrackTrackURI,
++    types_1.StageLinqValue.EngineDeck2TrackTrackData,
++    types_1.StageLinqValue.EngineDeck2TrackTrackLength,
++    types_1.StageLinqValue.EngineDeck2TrackSongLoaded,
++    types_1.StageLinqValue.EngineDeck2TrackSongAnalyzed,
++    types_1.StageLinqValue.EngineDeck2TrackSampleRate,
++    types_1.StageLinqValue.EngineDeck2TrackCurrentBPM,
++    types_1.StageLinqValue.EngineDeck2TrackCurrentKeyIndex,
++    types_1.StageLinqValue.EngineDeck2TrackKeyLock,
++    types_1.StageLinqValue.EngineDeck2TrackCuePosition,
++    types_1.StageLinqValue.EngineDeck2TrackLoopEnableState,
++    types_1.StageLinqValue.EngineDeck2TrackCurrentLoopInPosition,
++    types_1.StageLinqValue.EngineDeck2TrackCurrentLoopOutPosition,
++    types_1.StageLinqValue.EngineDeck2TrackCurrentLoopSizeInBeats,
++    // Deck 3
+     types_1.StageLinqValue.EngineDeck3Play,
+     types_1.StageLinqValue.EngineDeck3PlayState,
+     types_1.StageLinqValue.EngineDeck3PlayStatePath,
++    types_1.StageLinqValue.EngineDeck3CurrentBPM,
++    types_1.StageLinqValue.EngineDeck3Speed,
++    types_1.StageLinqValue.EngineDeck3SpeedRange,
++    types_1.StageLinqValue.EngineDeck3SyncMode,
++    types_1.StageLinqValue.EngineDeck3ExternalMixerVolume,
++    types_1.StageLinqValue.EngineDeck3ExternalScratchWheelTouch,
+     types_1.StageLinqValue.EngineDeck3TrackArtistName,
+-    types_1.StageLinqValue.EngineDeck3TrackTrackNetworkPath,
+-    types_1.StageLinqValue.EngineDeck3TrackSongLoaded,
+     types_1.StageLinqValue.EngineDeck3TrackSongName,
+-    types_1.StageLinqValue.EngineDeck3TrackTrackData,
+     types_1.StageLinqValue.EngineDeck3TrackTrackName,
+-    types_1.StageLinqValue.EngineDeck3CurrentBPM,
+-    types_1.StageLinqValue.EngineDeck3ExternalMixerVolume,
++    types_1.StageLinqValue.EngineDeck3TrackTrackNetworkPath,
++    types_1.StageLinqValue.EngineDeck3TrackTrackURI,
++    types_1.StageLinqValue.EngineDeck3TrackTrackData,
++    types_1.StageLinqValue.EngineDeck3TrackTrackLength,
++    types_1.StageLinqValue.EngineDeck3TrackSongLoaded,
++    types_1.StageLinqValue.EngineDeck3TrackSongAnalyzed,
++    types_1.StageLinqValue.EngineDeck3TrackSampleRate,
++    types_1.StageLinqValue.EngineDeck3TrackCurrentBPM,
++    types_1.StageLinqValue.EngineDeck3TrackCurrentKeyIndex,
++    types_1.StageLinqValue.EngineDeck3TrackKeyLock,
++    types_1.StageLinqValue.EngineDeck3TrackCuePosition,
++    types_1.StageLinqValue.EngineDeck3TrackLoopEnableState,
++    types_1.StageLinqValue.EngineDeck3TrackCurrentLoopInPosition,
++    types_1.StageLinqValue.EngineDeck3TrackCurrentLoopOutPosition,
++    types_1.StageLinqValue.EngineDeck3TrackCurrentLoopSizeInBeats,
++    // Deck 4
+     types_1.StageLinqValue.EngineDeck4Play,
+     types_1.StageLinqValue.EngineDeck4PlayState,
+     types_1.StageLinqValue.EngineDeck4PlayStatePath,
++    types_1.StageLinqValue.EngineDeck4CurrentBPM,
++    types_1.StageLinqValue.EngineDeck4Speed,
++    types_1.StageLinqValue.EngineDeck4SpeedRange,
++    types_1.StageLinqValue.EngineDeck4SyncMode,
++    types_1.StageLinqValue.EngineDeck4ExternalMixerVolume,
++    types_1.StageLinqValue.EngineDeck4ExternalScratchWheelTouch,
+     types_1.StageLinqValue.EngineDeck4TrackArtistName,
+-    types_1.StageLinqValue.EngineDeck4TrackTrackNetworkPath,
+-    types_1.StageLinqValue.EngineDeck4TrackSongLoaded,
+     types_1.StageLinqValue.EngineDeck4TrackSongName,
+-    types_1.StageLinqValue.EngineDeck4TrackTrackData,
+     types_1.StageLinqValue.EngineDeck4TrackTrackName,
+-    types_1.StageLinqValue.EngineDeck4CurrentBPM,
+-    types_1.StageLinqValue.EngineDeck4ExternalMixerVolume,
++    types_1.StageLinqValue.EngineDeck4TrackTrackNetworkPath,
++    types_1.StageLinqValue.EngineDeck4TrackTrackURI,
++    types_1.StageLinqValue.EngineDeck4TrackTrackData,
++    types_1.StageLinqValue.EngineDeck4TrackTrackLength,
++    types_1.StageLinqValue.EngineDeck4TrackSongLoaded,
++    types_1.StageLinqValue.EngineDeck4TrackSongAnalyzed,
++    types_1.StageLinqValue.EngineDeck4TrackSampleRate,
++    types_1.StageLinqValue.EngineDeck4TrackCurrentBPM,
++    types_1.StageLinqValue.EngineDeck4TrackCurrentKeyIndex,
++    types_1.StageLinqValue.EngineDeck4TrackKeyLock,
++    types_1.StageLinqValue.EngineDeck4TrackCuePosition,
++    types_1.StageLinqValue.EngineDeck4TrackLoopEnableState,
++    types_1.StageLinqValue.EngineDeck4TrackCurrentLoopInPosition,
++    types_1.StageLinqValue.EngineDeck4TrackCurrentLoopOutPosition,
++    types_1.StageLinqValue.EngineDeck4TrackCurrentLoopSizeInBeats,
++    // Client/Master
+     types_1.StageLinqValue.ClientPreferencesLayerA,
+     types_1.StageLinqValue.ClientPreferencesPlayer,
+     types_1.StageLinqValue.ClientPreferencesPlayerJogColorA,
+     types_1.StageLinqValue.ClientPreferencesPlayerJogColorB,
+-    types_1.StageLinqValue.EngineDeck1DeckIsMaster,
+-    types_1.StageLinqValue.EngineDeck2DeckIsMaster,
+-    types_1.StageLinqValue.EngineMasterMasterTempo,
+     types_1.StageLinqValue.EngineSyncNetworkMasterStatus,
+-    types_1.StageLinqValue.MixerChannelAssignment1,
+-    types_1.StageLinqValue.MixerChannelAssignment2,
+-    types_1.StageLinqValue.MixerChannelAssignment3,
+-    types_1.StageLinqValue.MixerChannelAssignment4,
+-    types_1.StageLinqValue.MixerNumberOfChannels,
++    types_1.StageLinqValue.EngineMasterMasterTempo,
++    types_1.StageLinqValue.EngineDeckCount,
++    // Add custom wildcard prefixes to grab Hotcues, active deck, and SD/USB states
++    "/GUI/Decks/Deck/",
++    "/Client/Librarian/",
++    "/Engine/Deck1/Pad/",
++    "/Engine/Deck2/Pad/",
++    "/Engine/Deck3/Pad/",
++    "/Engine/Deck4/Pad/"
+ ];
+ const MAGIC_MARKER = 'smaa';
+ // FIXME: Is this thing really an interval?

@@ -1,0 +1,5 @@
+{
+  "networkInterface": "192.168.6.226",
+  "autoReconnect": true,
+  "refreshInterval": 500
+}
