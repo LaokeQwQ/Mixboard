@@ -44,6 +44,15 @@ Mixboard is a lightweight, real-time web dashboard for Denon DJ Prime/Engine OS 
 - **StageLinQ:** Utilizes a patched version of `stagelinq` for real-time UDP/TCP data extraction from the hardware.
 - **Frontend:** Vanilla JS (`app.js`), HTML5, and pure CSS for low-latency DOM updates and beautiful aesthetics. The UI design heavily implements CSS Grids/Flexbox and dynamic SVG progress bar animations.
 
+## Contributors
+
+- **Chris Le** ([@chrisle](https://github.com/chrisle)) - Node.js ([stagelinq package](https://github.com/chrisle/StageLinq)) maintainer
+- **Martijn Reuvers** - Core development
+- **MarByteBeep** ([@MarByteBeep](https://github.com/MarByteBeep)) - Original TypeScript implementation
+- **honusz** - BeatInfo, TimeSync, Broadcast services
+- **Kalle Kirjalainen** - Contributions
+- **docBliny** - Contributions
+
 ## License
 
 MIT License. See `LICENSE` for details.
