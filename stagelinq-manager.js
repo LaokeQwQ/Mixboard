@@ -255,6 +255,11 @@ class StagelinqManager extends EventEmitter {
             deck.trackBPM = status.trackBpm;
         }
         if (status.speed !== undefined) deck.speed = status.speed;
+
+        // If currentBPM is missing but we have trackBPM and speed, calculate it
+        if (!deck.currentBPM && deck.trackBPM > 0 && deck.speed !== undefined) {
+            deck.currentBPM = deck.trackBPM * (1 + deck.speed);
+        }
         if (status.syncMode !== undefined) deck.syncMode = status.syncMode;
         if (status.masterStatus !== undefined) deck.deckIsMaster = !!status.masterStatus;
         if (status.masterTempo !== undefined) deck.masterTempo = status.masterTempo;
@@ -280,11 +285,16 @@ class StagelinqManager extends EventEmitter {
     }
 
     _resolveDeckNumber(status) {
-        // status.deck could be 'A','B','C','D' or '1','2','3','4'
+        // status.deck could be '1A', '2B', 'A','B','C','D' or '1','2','3','4'
         // status.player could be 1,2,3,4
         if (status.deck) {
+            const d = String(status.deck);
+            // Handle composite strings like "1A", "2B" by extracting the letter
+            const letterMatch = d.match(/[A-D]/i);
+            const letter = letterMatch ? letterMatch[0].toUpperCase() : d;
+
             const map = { 'A': 1, 'B': 2, 'C': 3, 'D': 4, '1': 1, '2': 2, '3': 3, '4': 4 };
-            return map[String(status.deck)] || null;
+            return map[letter] || null;
         }
         if (status.player) {
             return parseInt(status.player) || null;
@@ -324,9 +334,20 @@ class StagelinqManager extends EventEmitter {
             } else {
                 key = key.replace('Track/', '');
             }
+
+            // Route standard deck properties
             if (this.state.decks[deckNum]) {
                 this._applyRawDeckState(deckNum, key, value);
             }
+            return;
+        }
+
+        // Sync network master status: /Engine/Sync/Network/MasterStatus
+        if (path === '/Engine/Sync/Network/MasterStatus') {
+            // Apply this to the deck that is currently active if possible,
+            // or we might need to rely on the PlayerStatus events which have the deck context.
+            // The value is just a boolean. We will ignore the raw message here and prefer
+            // the 'masterStatus' from PlayerStatus which correctly attributes to a deck.
             return;
         }
 
@@ -443,6 +464,18 @@ class StagelinqManager extends EventEmitter {
                 break;
             case 'CurrentLoopSizeInBeats': deck.currentLoopSizeInBeats = parseFloat(value) || 0; break;
         }
+
+        // Handle Hotcue1-8
+        const hotcueMatch = key.match(/^HotCue(\d+)$/i);
+        if (hotcueMatch) {
+            const num = parseInt(hotcueMatch[1]);
+            if (!deck.hotcues) deck.hotcues = {};
+            // If value is a simple true/false state from older firmware
+            if (typeof value === 'boolean' || typeof value === 'number') {
+                if (!deck.hotcues[num]) deck.hotcues[num] = {};
+                deck.hotcues[num].state = !!value;
+            }
+        }
     }
 
     _applyMixerState(key, value) {
@@ -480,6 +513,8 @@ class StagelinqManager extends EventEmitter {
             port: 50002, status: 'discovered', lastSeen: new Date().toISOString(),
         });
         this.state.device.deckCount = 4;
+        this.state.device.hasSDCard = true;
+        this.state.device.hasUsb = true;
 
         // Deck 1 - Playing
         Object.assign(this.state.decks[1], {
@@ -496,6 +531,16 @@ class StagelinqManager extends EventEmitter {
             externalScratchWheelTouch: false, externalMixerVolume: 0.8,
             cuePosition: 32.5,
             loopEnableState: false, currentLoopInPosition: 0, currentLoopOutPosition: 0, currentLoopSizeInBeats: 4,
+            hotcues: {
+                1: { state: true, color: 0xFF22C55E }, // Green
+                2: { state: true, color: 0xFF3B82F6 }, // Blue
+                3: { state: false },
+                4: { state: false },
+                5: { state: true, color: 0xFFEF4444 }, // Red
+                6: { state: false },
+                7: { state: false },
+                8: { state: false },
+            }
         });
 
         // Deck 2 - Cued
@@ -513,6 +558,16 @@ class StagelinqManager extends EventEmitter {
             externalScratchWheelTouch: false, externalMixerVolume: 0,
             cuePosition: 16.0,
             loopEnableState: true, currentLoopInPosition: 64.0, currentLoopOutPosition: 80.0, currentLoopSizeInBeats: 8,
+            hotcues: {
+                1: { state: true, color: 0xFF8B5CF6 }, // Purple
+                2: { state: false },
+                3: { state: false },
+                4: { state: false },
+                5: { state: false },
+                6: { state: false },
+                7: { state: false },
+                8: { state: true, color: 0xFFF59E0B }, // Orange
+            }
         });
 
         Object.assign(this.state.decks[3], { songLoaded: false });

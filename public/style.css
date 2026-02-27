@@ -422,7 +422,7 @@ body {
     letter-spacing: 1px;
     padding: 1px 5px;
     border-radius: 3px;
-    background: linear-gradient(135deg, var(--accent-orange), #f97316);
+    background: linear-gradient(135deg, var(--accent-green), #16a34a);
     color: #000;
 }
 
@@ -445,6 +445,14 @@ body {
 .status-icon.active {
     color: var(--accent-green);
     background: rgba(34, 197, 94, 0.1);
+}
+
+.status-icon#deck-1-sync.active,
+.status-icon#deck-2-sync.active,
+.status-icon#deck-3-sync.active,
+.status-icon#deck-4-sync.active {
+    color: var(--accent-blue);
+    background: rgba(59, 130, 246, 0.1);
 }
 
 /* Deck Body */

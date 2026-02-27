@@ -4,7 +4,7 @@
     "deviceName": "Denon Prime 4 (Demo)",
     "softwareName": "JP11",
     "softwareVersion": "3.4.0",
-    "lastSeen": "2026-02-26T13:43:48.728Z",
+    "lastSeen": "2026-02-27T16:00:29.245Z",
     "autoConnect": true,
     "firstSeen": "2026-02-26T13:21:56.273Z"
   },
@@ -16,5 +16,14 @@
     "lastSeen": "2026-02-26T16:08:07.585Z",
     "autoConnect": true,
     "firstSeen": "2026-02-26T13:51:41.155Z"
+  },
+  {
+    "ip": "169.254.13.38",
+    "deviceName": "Denon SC6000M",
+    "softwareName": "JP11",
+    "softwareVersion": "3.3.1",
+    "lastSeen": "2026-02-27T15:59:57.722Z",
+    "autoConnect": true,
+    "firstSeen": "2026-02-27T15:59:57.722Z"
   }
 ]

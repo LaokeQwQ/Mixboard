@@ -163,8 +163,10 @@
             playEl.className = 'status-icon';
         }
         const syncEl = document.getElementById(`deck-${num}-sync`);
-        syncEl.style.display = deck.syncMode > 0 ? 'inline' : 'none';
-        syncEl.classList.toggle('active', deck.syncMode > 0);
+        // syncMode can be boolean (true/false) or integer (1/0)
+        const isSyncOn = deck.syncMode === true || deck.syncMode > 0;
+        syncEl.style.display = isSyncOn ? 'inline' : 'none';
+        syncEl.classList.toggle('active', isSyncOn);
         document.getElementById(`deck-${num}-master`).style.display = deck.deckIsMaster ? 'inline' : 'none';
 
         // BPM with Pitch Percentage
