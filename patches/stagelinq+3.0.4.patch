@@ -1,3 +1,32 @@
+diff --git a/node_modules/stagelinq/dist/Databases/Databases.js b/node_modules/stagelinq/dist/Databases/Databases.js
+index 4dd6518..c1aae65 100644
+--- a/node_modules/stagelinq/dist/Databases/Databases.js
++++ b/node_modules/stagelinq/dist/Databases/Databases.js
+@@ -72,12 +72,19 @@ class Databases extends stream_1.EventEmitter {
+         // Read database from source
+         LogEmitter_1.Logger.debug(`Reading database ${sourceId}`);
+         this.emit('dbDownloading', sourceId, dbPath);
+-        service.on('fileTransferProgress', (progress) => {
++        const onProgress = (progress) => {
+             this.emit('dbProgress', sourceId, progress.total, progress.bytesDownloaded, progress.percentComplete);
+-        });
+-        // Save database to a file
+-        await service.waitTillAvailable();
+-        const file = await service.getFile(source.database.location);
++        };
++        service.on('fileTransferProgress', onProgress);
++        let file;
++        try {
++            // Save database to a file
++            await service.waitTillAvailable();
++            file = await service.getFile(source.database.location);
++        }
++        finally {
++            service.off('fileTransferProgress', onProgress);
++        }
+         LogEmitter_1.Logger.debug(`Saving ${sourceId} to ${dbPath}`);
+         fs.writeFileSync(dbPath, Buffer.from(file));
+         this.sources.set(sourceId, dbPath);
 diff --git a/node_modules/stagelinq/dist/StageLinq/index.js b/node_modules/stagelinq/dist/StageLinq/index.js
 index 403eaf7..a30e3a6 100644
 --- a/node_modules/stagelinq/dist/StageLinq/index.js
@@ -60,10 +89,89 @@ index 2e9b9ac..cc4c0f3 100644
              this.queue[deck].push({ layer: deck, ...cueData });
          }
 diff --git a/node_modules/stagelinq/dist/network/StageLinqDevices.js b/node_modules/stagelinq/dist/network/StageLinqDevices.js
-index 00656fc..d05c545 100644
+index 00656fc..eef4352 100644
 --- a/node_modules/stagelinq/dist/network/StageLinqDevices.js
 +++ b/node_modules/stagelinq/dist/network/StageLinqDevices.js
-@@ -168,12 +168,12 @@ class StageLinqDevices extends events_1.EventEmitter {
+@@ -82,27 +82,8 @@ class StageLinqDevices extends events_1.EventEmitter {
+     }
+     ////////////////////////////////////////////////////////////////////////////
+     /**
+-     * Waits for all devices to be connected with databases downloaded
+-     * then connects to the StateMap.
+-     *
+-     * Explained:
+-     *
+-     * Why wait for all devices? Because a race condition exists when using the
+-     * database methods.
+-     *
+-     * If there are two SC6000 players on the network both will be sending
+-     * broadcast packets and so their StateMap can be initialized at any time
+-     * in any order.
+-     *
+-     * Assume you have player 1 and player 2 linked. Player 2 has a track that
+-     * is loaded from a USB drive plugged into player 1. Player 2 will be
+-     * ready before Player 1 because Player 1 will still be downloading a large
+-     * database. The race condition is if you try to read from the database on
+-     * the track that is plugged into Player 1 that isn't ready yet.
+-     *
+-     * This method prevents that by waiting for both players to connect and
+-     * have their databases loaded before initializing the StateMap.
+-     *
++     * Waits for device discovery to settle, initializes StateMap first, and
++     * starts optional artwork databases afterwards.
+      */
+     waitForAllDevices() {
+         LogEmitter_1.Logger.log('Start watching for devices ...');
+@@ -118,10 +99,28 @@ class StageLinqDevices extends events_1.EventEmitter {
+                 LogEmitter_1.Logger.debug(`Devices found: ${values.length} ${JSON.stringify(entries)}`);
+                 if (this.deviceWatchTimeout)
+                     clearInterval(this.deviceWatchTimeout);
+-                for (const cb of this.stateMapCallback) {
+-                    this.setupStateMap(cb.connectionInfo, cb.networkDevice);
++                const callbacks = [...this.stateMapCallback];
++                const results = await Promise.allSettled(callbacks.map(cb => this.setupStateMapWithRetry(cb.connectionInfo, cb.networkDevice)));
++                for (let i = 0; i < results.length; i++) {
++                    const result = results[i];
++                    if (result.status === 'rejected') {
++                        LogEmitter_1.Logger.warn(`StateMap setup failed: ${result.reason instanceof Error ? result.reason.message : result.reason}`);
++                    }
++                    else if (this.options.enableFileTranfer && this.options.downloadDbSources) {
++                        const cb = callbacks[i];
++                        // Mixboard uses the database for artwork only. Start it after
++                        // StateMap so track/BPM/playback data is available first.
++                        void this.downloadDatabase(cb.networkDevice, cb.connectionInfo).catch((e) => {
++                            LogEmitter_1.Logger.warn(`Database download failed for ${cb.connectionInfo.address}: ${e instanceof Error ? e.message : e}`);
++                        });
++                    }
++                }
++                if (results.some(result => result.status === 'fulfilled')) {
++                    this.emit('ready');
++                }
++                else {
++                    LogEmitter_1.Logger.warn('No StateMap service could be initialized; realtime deck data is unavailable');
+                 }
+-                this.emit('ready');
+             }
+             else {
+                 LogEmitter_1.Logger.log(`Waiting for devices ...`);
+@@ -147,15 +146,8 @@ class StageLinqDevices extends events_1.EventEmitter {
+                 await networkDevice.connect();
+                 // Setup file transfer service
+                 await this.setupFileTransferService(networkDevice, connectionInfo);
+-                // Download the database
+-                if (this.options.enableFileTranfer && this.options.downloadDbSources) {
+-                    await this.downloadDatabase(networkDevice, connectionInfo);
+-                }
+                 // Setup other services that should be initialized before StateMap here.
+-                // StateMap will be initialized after all devices have completed
+-                // this method. In other words, StateMap will initialize
+-                // after all entries in this.discoveryStatus return
+-                // ConnectionStatus.CONNECTED
++                // StateMap must not wait for an optional, potentially large database.
+                 // Append to the list of states we need to setup later.
+                 this.stateMapCallback.push({ connectionInfo, networkDevice });
+                 // Mark this device as connected.
+@@ -168,12 +160,12 @@ class StageLinqDevices extends events_1.EventEmitter {
                  LogEmitter_1.Logger.warn(`Could not connect to ${this.deviceId(connectionInfo)} ` +
                      `(${attempt}/${this.options.maxRetries}): ${e}`);
                  attempt += 1;
@@ -80,7 +188,7 @@ index 00656fc..d05c545 100644
      }
      async setupFileTransferService(networkDevice, connectionInfo) {
          const sourceId = this.sourceId(connectionInfo);
-@@ -235,6 +235,17 @@ class StageLinqDevices extends events_1.EventEmitter {
+@@ -235,6 +227,33 @@ class StageLinqDevices extends events_1.EventEmitter {
          player.on('nowPlaying', (status) => {
              this.emit('nowPlaying', status);
          });
@@ -95,9 +203,385 @@ index 00656fc..d05c545 100644
 +        } catch (e) {
 +            LogEmitter_1.Logger.warn(`BeatInfo service unavailable for ${connectionInfo.address}: ${e.message}`);
 +        }
++    }
++    async setupStateMapWithRetry(connectionInfo, networkDevice) {
++        let lastError;
++        for (let attempt = 1; attempt <= 3; attempt++) {
++            try {
++                return await this.setupStateMap(connectionInfo, networkDevice);
++            }
++            catch (e) {
++                lastError = e;
++                LogEmitter_1.Logger.warn(`StateMap setup attempt ${attempt}/3 failed for ${connectionInfo.address}: ${e instanceof Error ? e.message : e}`);
++                if (attempt < 3) {
++                    await (0, utils_1.sleep)(attempt * 1000);
++                }
++            }
++        }
++        throw lastError;
      }
      deviceId(device) {
          return `${device.address}:${device.port}:` +
+diff --git a/node_modules/stagelinq/dist/services/FileTransfer.js b/node_modules/stagelinq/dist/services/FileTransfer.js
+index 5a95c7d..42b417f 100644
+--- a/node_modules/stagelinq/dist/services/FileTransfer.js
++++ b/node_modules/stagelinq/dist/services/FileTransfer.js
+@@ -24,27 +24,32 @@ class FileTransfer extends Service_1.Service {
+     constructor() {
+         super(...arguments);
+         this.receivedFile = null;
++        this.receivedRanges = [];
++        this.transferError = null;
+         this._available = true;
++        this.on('protocolError', (err) => {
++            this.transferError = err instanceof Error ? err : new Error(String(err));
++        });
+     }
+     async init() { }
+     parseData(p_ctx) {
+         const check = p_ctx.getString(4);
+-        (0, assert_1.strict)(check === MAGIC_MARKER);
+-        const code = p_ctx.readUInt32();
+-        // If first 4 bytes are non-zero, a timecode is sent
+-        if (code > 0) {
+-            (0, assert_1.strict)(p_ctx.sizeLeft() === 8);
++        (0, assert_1.strict)(check === MAGIC_MARKER, `Invalid FileTransfer marker '${check}'`);
++        const transactionId = p_ctx.readUInt32();
++        // Older peers send this request-shaped packet as a timecode notification.
++        // Modern Engine OS uses the same field as a transaction id on replies.
++        if (transactionId > 0 && p_ctx.sizeLeft() === 8) {
+             const id = p_ctx.readUInt32();
+-            (0, assert_1.strict)(id === 0x07d2);
+-            (0, assert_1.strict)(p_ctx.readUInt32() === 0);
++            const trailer = p_ctx.readUInt32();
++            (0, assert_1.strict)(id === 0x07d2 && trailer === 0, `Invalid legacy FileTransfer timecode packet (transactionId=${transactionId}, id=${id}, trailer=${trailer})`);
+             return {
+                 id: MessageId.TimeCode,
+                 message: {
+-                    timecode: code,
++                    timecode: transactionId,
++                    transactionId,
+                 },
+             };
+         }
+-        // Else
+         const messageId = p_ctx.readUInt32();
+         switch (messageId) {
+             case MessageId.SourceLocations: {
+@@ -56,19 +61,20 @@ class FileTransfer extends Service_1.Service {
+                     sources.push(location);
+                 }
+                 // Final three bytes should be 0x1 0x1 0x1
+-                (0, assert_1.strict)(p_ctx.readUInt8() === 0x1);
+-                (0, assert_1.strict)(p_ctx.readUInt8() === 0x1);
+-                (0, assert_1.strict)(p_ctx.readUInt8() === 0x1);
+-                (0, assert_1.strict)(p_ctx.isEOF());
++                (0, assert_1.strict)(p_ctx.readUInt8() === 0x1, 'Invalid FileTransfer source trailer byte 1');
++                (0, assert_1.strict)(p_ctx.readUInt8() === 0x1, 'Invalid FileTransfer source trailer byte 2');
++                (0, assert_1.strict)(p_ctx.readUInt8() === 0x1, 'Invalid FileTransfer source trailer byte 3');
++                (0, assert_1.strict)(p_ctx.isEOF(), 'Unexpected data after FileTransfer source list');
+                 return {
+                     id: messageId,
+                     message: {
+                         sources: sources,
++                        transactionId,
+                     },
+                 };
+             }
+             case MessageId.FileStat: {
+-                (0, assert_1.strict)(p_ctx.sizeLeft() === 53);
++                (0, assert_1.strict)(p_ctx.sizeLeft() === 53, `Invalid FileTransfer stat payload length ${p_ctx.sizeLeft()}`);
+                 // Last 4 bytes (FAT32) indicate size of file
+                 p_ctx.seek(49);
+                 const size = p_ctx.readUInt32();
+@@ -76,6 +82,7 @@ class FileTransfer extends Service_1.Service {
+                     id: messageId,
+                     message: {
+                         size: size,
++                        transactionId,
+                     },
+                 };
+             }
+@@ -83,41 +90,42 @@ class FileTransfer extends Service_1.Service {
+                 // End of result indication?
+                 return {
+                     id: messageId,
+-                    message: null,
++                    message: { transactionId },
+                 };
+             }
+             case MessageId.FileTransferId: {
+-                (0, assert_1.strict)(p_ctx.sizeLeft() === 12);
+-                (0, assert_1.strict)(p_ctx.readUInt32() === 0x0);
++                (0, assert_1.strict)(p_ctx.sizeLeft() === 12, `Invalid FileTransfer id payload length ${p_ctx.sizeLeft()}`);
++                (0, assert_1.strict)(p_ctx.readUInt32() === 0x0, 'Invalid FileTransfer id reserved field');
+                 const filesize = p_ctx.readUInt32();
+-                const id = p_ctx.readUInt32();
++                const transferId = p_ctx.readUInt32();
+                 return {
+                     id: messageId,
+                     message: {
+                         size: filesize,
+-                        txid: id,
++                        transactionId,
++                        transferId,
+                     },
+                 };
+             }
+             case MessageId.FileTransferChunk: {
+-                (0, assert_1.strict)(p_ctx.readUInt32() === 0x0);
++                (0, assert_1.strict)(p_ctx.readUInt32() === 0x0, `Invalid FileTransfer chunk reserved field (transactionId=${transactionId})`);
+                 const offset = p_ctx.readUInt32();
+                 const chunksize = p_ctx.readUInt32();
+-                (0, assert_1.strict)(chunksize === p_ctx.sizeLeft());
+-                (0, assert_1.strict)(p_ctx.sizeLeft() <= exports.CHUNK_SIZE);
++                (0, assert_1.strict)(chunksize === p_ctx.sizeLeft(), `Invalid FileTransfer chunk length ${chunksize}; payload has ${p_ctx.sizeLeft()} bytes`);
+                 return {
+                     id: messageId,
+                     message: {
+                         data: p_ctx.readRemainingAsNewBuffer(),
+                         offset: offset,
+                         size: chunksize,
++                        transactionId,
+                     },
+                 };
+             }
+             case MessageId.Unknown0: {
+                 return {
+                     id: messageId,
+-                    message: null,
++                    message: { transactionId },
+                 };
+             }
+             case MessageId.ServiceDisconnect: {
+@@ -125,7 +133,7 @@ class FileTransfer extends Service_1.Service {
+                 this.disconnect();
+                 return {
+                     id: messageId,
+-                    message: null,
++                    message: { transactionId },
+                 };
+             }
+             default:
+@@ -137,63 +145,106 @@ class FileTransfer extends Service_1.Service {
+     }
+     messageHandler(p_data) {
+         if (p_data.id === MessageId.FileTransferChunk && this.receivedFile) {
+-            (0, assert_1.strict)(this.receivedFile.sizeLeft() >= p_data.message.size);
+-            this.receivedFile.write(p_data.message.data);
++            const { data, offset, size } = p_data.message;
++            const total = this.receivedFile.buffer.byteLength;
++            const end = offset + size;
++            if (!Number.isInteger(offset) || !Number.isInteger(size) || offset < 0 || size < 0 || end > total || data.byteLength !== size) {
++                throw new RangeError(`Invalid FileTransfer chunk range offset=${offset} size=${size} data=${data.byteLength} total=${total}`);
++            }
++            new Uint8Array(this.receivedFile.buffer, offset, size).set(data);
++            const ranges = [...this.receivedRanges, [offset, end]].sort((a, b) => a[0] - b[0]);
++            const merged = [];
++            for (const range of ranges) {
++                const last = merged[merged.length - 1];
++                if (!last || range[0] > last[1]) {
++                    merged.push([...range]);
++                }
++                else {
++                    last[1] = Math.max(last[1], range[1]);
++                }
++            }
++            this.receivedRanges = merged;
++            const bytesDownloaded = merged.reduce((sum, range) => sum + range[1] - range[0], 0);
++            this.receivedFile.set(bytesDownloaded);
+         }
+         else {
+             // Logger.log(p_data);
+         }
+     }
+     async getFile(p_location) {
+-        (0, assert_1.strict)(this.receivedFile === null);
+-        if (this._available) {
+-            this._available = false;
++        while (!this._available) {
++            await (0, sleep_1.sleep)(250);
+         }
+-        await this.requestFileTransferId(p_location);
+-        const txinfo = await this.waitForMessage(MessageId.FileTransferId);
+-        if (txinfo) {
+-            this.receivedFile = new WriteContext_1.WriteContext({ size: txinfo.size });
+-            const totalChunks = Math.ceil(txinfo.size / exports.CHUNK_SIZE);
+-            const total = parseInt(txinfo.size);
++        this._available = false;
++        this.transferError = null;
++        try {
++            (0, assert_1.strict)(this.receivedFile === null, 'A FileTransfer download is already active');
++            await this.requestFileTransferId(p_location);
++            const txinfo = await this.waitForMessage(MessageId.FileTransferId);
++            if (!txinfo) {
++                throw new Error('Device returned no FileTransfer id');
++            }
++            const total = Number(txinfo.size);
++            if (!Number.isSafeInteger(total) || total < 0) {
++                throw new Error(`Device returned invalid FileTransfer size '${txinfo.size}'`);
++            }
+             if (total === 0) {
+                 LogEmitter_1.Logger.warn(`${p_location} doesn't exist or is a streaming file`);
+                 return new Uint8Array(0);
+             }
+-            await this.requestChunkRange(txinfo.txid, 0, totalChunks - 1);
+-            try {
+-                await new Promise(async (resolve, reject) => {
+-                    setTimeout(() => {
+-                        reject(new Error(`Failed to download '${p_location}'`));
+-                    }, types_1.DOWNLOAD_TIMEOUT);
+-                    while (this.receivedFile && this.receivedFile.isEOF() === false) {
+-                        const bytesDownloaded = total - this.receivedFile.sizeLeft();
+-                        const percentComplete = (bytesDownloaded / total) * 100;
+-                        this.emit('fileTransferProgress', {
+-                            sizeLeft: this.receivedFile?.sizeLeft() ?? 0,
+-                            total: txinfo.size,
+-                            bytesDownloaded: bytesDownloaded,
+-                            percentComplete: percentComplete
+-                        });
+-                        LogEmitter_1.Logger.debug(`Reading ${p_location} progressComplete=${Math.ceil(percentComplete)}% ${bytesDownloaded}/${total}`);
+-                        await (0, sleep_1.sleep)(200);
+-                    }
+-                    LogEmitter_1.Logger.debug(`Download complete.`);
+-                    resolve(true);
++            this.receivedFile = new WriteContext_1.WriteContext({ size: total, autoGrow: false });
++            this.receivedRanges = [];
++            const totalChunks = Math.ceil(total / exports.CHUNK_SIZE);
++            const transactionId = txinfo.transactionId ?? 0;
++            const transferId = txinfo.transferId ?? 1;
++            const emitProgress = () => {
++                const bytesDownloaded = total - this.receivedFile.sizeLeft();
++                const percentComplete = (bytesDownloaded / total) * 100;
++                this.emit('fileTransferProgress', {
++                    sizeLeft: this.receivedFile.sizeLeft(),
++                    total,
++                    bytesDownloaded,
++                    percentComplete,
+                 });
++                return bytesDownloaded;
++            };
++            emitProgress();
++            await this.requestChunkRange(transactionId, transferId, 0, totalChunks - 1);
++            let lastBytesDownloaded = 0;
++            let lastProgressAt = Date.now();
++            while (!this.receivedFile.isEOF()) {
++                await (0, sleep_1.sleep)(200);
++                if (this.transferError) {
++                    throw this.transferError;
++                }
++                const bytesDownloaded = emitProgress();
++                if (bytesDownloaded > lastBytesDownloaded) {
++                    lastBytesDownloaded = bytesDownloaded;
++                    lastProgressAt = Date.now();
++                }
++                else if (Date.now() - lastProgressAt >= types_1.DOWNLOAD_TIMEOUT) {
++                    throw new Error(`No FileTransfer progress for ${types_1.DOWNLOAD_TIMEOUT}ms`);
++                }
+             }
+-            catch (err) {
+-                const msg = `Could not read database from ${p_location}: ${err instanceof Error ? err.message : err}`;
+-                LogEmitter_1.Logger.error(msg);
+-                this._available = true;
+-                throw new Error(msg);
++            if (lastBytesDownloaded < total) {
++                emitProgress();
+             }
++            LogEmitter_1.Logger.debug(`Download complete.`);
+             LogEmitter_1.Logger.debug(`Signaling transfer complete.`);
+-            await this.signalTransferComplete();
++            await this.signalTransferComplete(transactionId);
++            return this.receivedFile.getBuffer();
++        }
++        catch (err) {
++            const msg = `Could not read database from ${p_location}: ${err instanceof Error ? err.message : err}`;
++            LogEmitter_1.Logger.error(msg);
++            throw new Error(msg, { cause: err });
++        }
++        finally {
++            this.receivedFile = null;
++            this.receivedRanges = [];
++            this.transferError = null;
+             this._available = true;
+         }
+-        const buf = this.receivedFile ? this.receivedFile.getBuffer() : new Uint8Array(0);
+-        this.receivedFile = null;
+-        return buf;
+     }
+     async getSources() {
+         const result = [];
+@@ -251,25 +302,25 @@ class FileTransfer extends Service_1.Service {
+         ctx.writeUInt32(0x0); // Not sure why we need 0x0 here
+         await this.writeWithLength(ctx);
+     }
+-    async requestChunkRange(p_txid, p_chunkStartId, p_chunkEndId) {
++    async requestChunkRange(p_transactionId, p_transferId, p_chunkStartId, p_chunkEndId) {
+         // 0x7d5: seems to be the code to request chunk range
+         const ctx = new WriteContext_1.WriteContext();
+         ctx.writeFixedSizedString(MAGIC_MARKER);
+-        ctx.writeUInt32(0x0);
++        ctx.writeUInt32(p_transactionId);
+         ctx.writeUInt32(0x7d5);
+         ctx.writeUInt32(0x0);
+-        ctx.writeUInt32(p_txid); // I assume this is the transferid
++        ctx.writeUInt32(p_transferId);
+         ctx.writeUInt32(0x0);
+         ctx.writeUInt32(p_chunkStartId);
+         ctx.writeUInt32(0x0);
+         ctx.writeUInt32(p_chunkEndId);
+         await this.writeWithLength(ctx);
+     }
+-    async signalTransferComplete() {
++    async signalTransferComplete(p_transactionId) {
+         // 0x7d6: seems to be the code to signal transfer completed
+         const ctx = new WriteContext_1.WriteContext();
+         ctx.writeFixedSizedString(MAGIC_MARKER);
+-        ctx.writeUInt32(0x0);
++        ctx.writeUInt32(p_transactionId);
+         ctx.writeUInt32(0x7d6);
+         await this.writeWithLength(ctx);
+     }
+diff --git a/node_modules/stagelinq/dist/services/Service.js b/node_modules/stagelinq/dist/services/Service.js
+index c2c81c6..43aa50e 100644
+--- a/node_modules/stagelinq/dist/services/Service.js
++++ b/node_modules/stagelinq/dist/services/Service.js
+@@ -104,6 +104,7 @@ class Service extends events_1.EventEmitter {
+             }
+             catch (err) {
+                 // FIXME: Rethrow based on the severity?
++                this.emit('protocolError', err);
+                 LogEmitter_1.Logger.error(err);
+             }
+         });
+@@ -132,14 +133,26 @@ class Service extends events_1.EventEmitter {
+     }
+     async waitForMessage(p_messageId) {
+         return await new Promise((resolve, reject) => {
++            let timeout;
++            const cleanup = () => {
++                clearTimeout(timeout);
++                this.removeListener('message', listener);
++                this.removeListener('protocolError', errorListener);
++            };
+             const listener = (p_message) => {
+                 if (p_message.id === p_messageId) {
+-                    this.removeListener('message', listener);
++                    cleanup();
+                     resolve(p_message.message);
+                 }
+             };
++            const errorListener = (err) => {
++                cleanup();
++                reject(err);
++            };
+             this.addListener('message', listener);
+-            setTimeout(() => {
++            this.addListener('protocolError', errorListener);
++            timeout = setTimeout(() => {
++                cleanup();
+                 reject(new Error(`Failed to receive message '${p_messageId}' on time`));
+             }, types_1.MESSAGE_TIMEOUT);
+         });
 diff --git a/node_modules/stagelinq/dist/services/StateMap.js b/node_modules/stagelinq/dist/services/StateMap.js
 index 9562ac2..4c09e32 100644
 --- a/node_modules/stagelinq/dist/services/StateMap.js

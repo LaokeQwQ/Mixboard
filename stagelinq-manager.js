@@ -27,6 +27,10 @@ class StagelinqManager extends EventEmitter {
         this.discoveredDevices = new Map();
         this._connectedIp = null;
         this._dbPaths = new Map(); // sourceId -> dbPath
+        this._dbProgressMilestones = new Map();
+        this._stagelinqLogger = null;
+        this._stagelinqErrorHandler = null;
+        this._stagelinqWarnHandler = null;
     }
 
     _createEmptyState() {
@@ -86,6 +90,7 @@ class StagelinqManager extends EventEmitter {
                 enableFileTranfer: true,
                 maxRetries: 10,
             });
+            this._attachStagelinqLogger(this.stagelinqInstance.logger);
 
             const devices = this.stagelinqInstance.devices;
             let messageCount = 0;
@@ -201,11 +206,17 @@ class StagelinqManager extends EventEmitter {
             this.stagelinqInstance.on('dbDownloaded', (sourceId, dbPath) => {
                 console.log(`[StagelinQ] 💾 Database downloaded: ${sourceId} → ${dbPath}`);
                 this._dbPaths.set(sourceId, dbPath);
+                this._dbProgressMilestones.delete(sourceId);
             });
 
             this.stagelinqInstance.on('dbProgress', (sourceId, total, downloaded, percent) => {
-                if (percent % 25 === 0 || percent >= 99) {
-                    console.log(`[StagelinQ] 📥 DB download ${sourceId}: ${percent}%`);
+                const normalized = Math.max(0, Math.min(100, Number(percent)));
+                if (!Number.isFinite(normalized)) return;
+                const milestone = normalized >= 100 ? 100 : Math.floor(normalized / 5) * 5;
+                const previous = this._dbProgressMilestones.get(sourceId);
+                if (previous === undefined || milestone > previous) {
+                    this._dbProgressMilestones.set(sourceId, milestone);
+                    console.log(`[StagelinQ] 📥 DB download ${sourceId}: ${milestone}% (${downloaded}/${total} bytes)`);
                 }
             });
 
@@ -696,12 +707,14 @@ class StagelinqManager extends EventEmitter {
             } catch (e) { /* ignore */ }
             this.stagelinqInstance = null;
         }
+        this._detachStagelinqLogger();
         const wasConnected = this.connected;
         const prevDevice = { ...this.state.device };
         this.connected = false;
         this._connectedIp = null;
         this.state = this._createEmptyState();
         this.discoveredDevices.clear();
+        this._dbProgressMilestones.clear();
 
         if (wasConnected) {
             this.emit('deviceDisconnected', {
@@ -710,6 +723,33 @@ class StagelinqManager extends EventEmitter {
             });
         }
         this.emit('stateUpdate', this.state);
+    }
+
+    _attachStagelinqLogger(logger) {
+        this._detachStagelinqLogger();
+        if (!logger || typeof logger.on !== 'function') return;
+        this._stagelinqErrorHandler = (...args) => {
+            const details = args.map(arg => arg instanceof Error ? (arg.stack || arg.message) : arg);
+            console.error('[StagelinQ] Library error:', ...details);
+        };
+        this._stagelinqWarnHandler = (...args) => {
+            console.warn('[StagelinQ] Library warning:', ...args);
+        };
+        this._stagelinqLogger = logger;
+        logger.on('error', this._stagelinqErrorHandler);
+        logger.on('warn', this._stagelinqWarnHandler);
+    }
+
+    _detachStagelinqLogger() {
+        if (this._stagelinqLogger && this._stagelinqErrorHandler) {
+            this._stagelinqLogger.off('error', this._stagelinqErrorHandler);
+        }
+        if (this._stagelinqLogger && this._stagelinqWarnHandler) {
+            this._stagelinqLogger.off('warn', this._stagelinqWarnHandler);
+        }
+        this._stagelinqLogger = null;
+        this._stagelinqErrorHandler = null;
+        this._stagelinqWarnHandler = null;
     }
 
     /**

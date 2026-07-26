@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js --demo",
+    "test": "node --test",
     "postinstall": "patch-package"
   },
   "repository": {
